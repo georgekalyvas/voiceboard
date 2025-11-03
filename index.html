@@ -2141,13 +2141,22 @@
             </div>
 
             <!-- Export Panel -->
-            <div class="export-panel" id="export-panel" style="display: none;">
+            <div class="export-panel" id="export-panel">
                 <div class="export-header">
                     <div class="export-title">Export Options</div>
                     <button class="btn-close" onclick="exportOptions.hide()">✕</button>
                 </div>
                 
+                <div id="export-info" style="padding: 0 20px; color: var(--color-text-secondary); font-size: 14px; text-align: center;">
+                    <span id="transcript-preview">Ready to export your transcript</span>
+                </div>
+                
                 <div class="export-buttons">
+                    <button class="export-btn" onclick="copyTranscriptFromPanel()">
+                        <div class="btn-icon">📋</div>
+                        <div class="btn-label">Copy</div>
+                    </button>
+                    
                     <button class="export-btn" onclick="exportAsText()">
                         <div class="btn-icon">📝</div>
                         <div class="btn-label">Text File</div>
@@ -2158,9 +2167,19 @@
                         <div class="btn-label">PDF</div>
                     </button>
                     
-                    <button class="export-btn" onclick="shareTranscript()" id="share-btn" style="display: none;">
+                    <button class="export-btn" onclick="exportAsJSON()">
+                        <div class="btn-icon">📊</div>
+                        <div class="btn-label">JSON</div>
+                    </button>
+                    
+                    <button class="export-btn" onclick="shareTranscript()" id="share-btn">
                         <div class="btn-icon">📤</div>
                         <div class="btn-label">Share</div>
+                    </button>
+                    
+                    <button class="export-btn" onclick="clearTranscriptFromPanel()" style="background: var(--color-bg-4); color: var(--color-text-secondary);">
+                        <div class="btn-icon">🗑️</div>
+                        <div class="btn-label">Clear</div>
                     </button>
                 </div>
             </div>
@@ -3888,6 +3907,7 @@
             URL.revokeObjectURL(url);
             
             exportOptions.hide();
+            showSuccess('Transcript exported as text file');
             widget.emit('export', { type: 'text', content: transcript });
         }
         
@@ -3927,6 +3947,7 @@
             printWindow.print();
             
             exportOptions.hide();
+            showSuccess('Transcript sent to printer/PDF');
             widget.emit('export', { type: 'pdf', content: transcript });
         }
         
@@ -3941,9 +3962,18 @@
                 navigator.share({
                     title: 'Transcript',
                     text: transcript,
-                }).catch(console.error);
+                }).then(() => {
+                    showSuccess('Transcript shared successfully');
+                }).catch((error) => {
+                    if (error.name !== 'AbortError') {
+                        showError('Failed to share transcript');
+                        console.error('Share failed:', error);
+                    }
+                });
             } else {
+                // Fallback to copy if share API not available
                 copyTranscript();
+                showInfo('Share not available. Transcript copied to clipboard instead.');
             }
             
             exportOptions.hide();
@@ -3954,6 +3984,19 @@
             if (!transcript.trim()) {
                 showError('No transcript to copy');
                 return;
+            }
+            
+            // Visual feedback - briefly highlight the transcript
+            const transcriptElement = document.getElementById('transcript');
+            if (transcriptElement) {
+                transcriptElement.style.transition = 'background-color 0.3s ease';
+                transcriptElement.style.backgroundColor = 'var(--color-teal-100)';
+                setTimeout(() => {
+                    transcriptElement.style.backgroundColor = '';
+                    setTimeout(() => {
+                        transcriptElement.style.transition = '';
+                    }, 300);
+                }, 300);
             }
             
             if (navigator.clipboard) {
@@ -3979,16 +4022,36 @@
             toggle() {
                 const panel = document.getElementById('export-panel');
                 panel.classList.toggle('visible');
+                if (panel.classList.contains('visible')) {
+                    this.updateInfo();
+                }
             },
             
             show() {
                 const panel = document.getElementById('export-panel');
                 panel.classList.add('visible');
+                this.updateInfo();
             },
             
             hide() {
                 const panel = document.getElementById('export-panel');
                 panel.classList.remove('visible');
+            },
+            
+            updateInfo() {
+                const transcript = getTranscript();
+                const preview = document.getElementById('transcript-preview');
+                if (preview) {
+                    if (!transcript.trim()) {
+                        preview.textContent = 'No transcript available to export';
+                        preview.style.color = 'var(--color-text-muted)';
+                    } else {
+                        const words = transcript.split(/\s+/).length;
+                        const chars = transcript.length;
+                        preview.textContent = `${words} words, ${chars} characters ready to export`;
+                        preview.style.color = 'var(--color-text-secondary)';
+                    }
+                }
             }
         };
         
@@ -4032,6 +4095,89 @@
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        // Get transcript text content
+        function getTranscript() {
+            const transcript = document.getElementById('transcript');
+            if (!transcript) return '';
+            
+            // Get only the text content, removing any HTML formatting
+            const text = transcript.textContent || transcript.innerText || '';
+            
+            // Clean up the text - remove "Listening..." placeholder and extra whitespace
+            return text.replace(/^Listening\.\.\./, '').trim();
+        }
+
+        // Clear transcript content
+        function clearTranscript() {
+            const transcript = document.getElementById('transcript');
+            if (transcript) {
+                transcript.innerHTML = '';
+                transcribeState.finalTranscript = '';
+                transcribeState.interimTranscript = '';
+                transcribeState.wordCount = 0;
+                updateWordCount();
+                widget.emit('transcript-cleared', {});
+            }
+        }
+
+        // Copy transcript from export panel and close panel
+        function copyTranscriptFromPanel() {
+            copyTranscript();
+            exportOptions.hide();
+        }
+
+        // Clear transcript from export panel with confirmation
+        function clearTranscriptFromPanel() {
+            const transcript = getTranscript();
+            if (!transcript.trim()) {
+                showError('No transcript to clear');
+                exportOptions.hide();
+                return;
+            }
+            
+            if (confirm('Are you sure you want to clear the entire transcript? This action cannot be undone.')) {
+                clearTranscript();
+                exportOptions.hide();
+                showSuccess('Transcript cleared');
+            }
+        }
+
+        // Export as JSON with metadata
+        function exportAsJSON() {
+            const transcript = getTranscript();
+            if (!transcript.trim()) {
+                showError('No transcript to export');
+                return;
+            }
+            
+            const exportData = {
+                transcript: transcript,
+                metadata: {
+                    duration: transcribeState.duration,
+                    wordCount: transcribeState.wordCount,
+                    language: transcribeState.language,
+                    createdAt: new Date().toISOString(),
+                    settings: {
+                        autoPunctuation: transcribeState.settings.autoPunctuation,
+                        punctuationSensitivity: transcribeState.settings.punctuationSensitivity,
+                        fontSize: transcribeState.settings.fontSize
+                    }
+                }
+            };
+            
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transcript-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            exportOptions.hide();
+            showSuccess('Transcript exported as JSON');
+            widget.emit('export', { type: 'json', content: exportData });
         }
         
         function startAudioLevelMonitoring() {
