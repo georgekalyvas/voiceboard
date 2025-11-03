@@ -2393,6 +2393,13 @@
                 document.getElementById('share-btn').style.display = 'block';
             }
             
+            // Check internet connection and inform user
+            if (!navigator.onLine) {
+                showWarning('⚠️ No internet connection detected. Live transcription requires internet. Audio recording will still work.');
+            } else {
+                console.log('✓ Internet connection available');
+            }
+            
             // Emit ready event
             widget.emit('ready', { version: '1.0' });
         }
@@ -2979,6 +2986,7 @@
             switch (errorType) {
                 case 'not-allowed':
                     showError('Speech recognition access denied. Please enable microphone permissions in your browser.');
+                    transcribeState.shouldContinueRecording = false;
                     break;
                 case 'no-speech':
                     console.log('No speech detected, will restart automatically...');
@@ -2990,15 +2998,45 @@
                     break;
                 case 'audio-capture':
                     showError('Audio capture failed. Please check your microphone connection.');
+                    transcribeState.shouldContinueRecording = false;
                     break;
                 case 'network':
-                    showWarning('Network connection issue. Trying to reconnect...');
-                    if (transcribeState.shouldContinueRecording) {
-                        setTimeout(() => startSpeechRecognition(), 2000);
+                    // Increment network error counter
+                    transcribeState.speechRestartAttempts++;
+                    
+                    if (transcribeState.speechRestartAttempts >= transcribeState.maxSpeechRestartAttempts) {
+                        showError('Speech recognition is experiencing persistent network issues. Recording continues, but live transcription is disabled. Your audio is still being recorded.');
+                        transcribeState.shouldContinueRecording = false;
+                        
+                        // Update UI to show recording continues without transcription
+                        const status = document.getElementById('status');
+                        if (status) {
+                            status.innerHTML = '<span class="recording-dot"></span> Recording (transcription paused)';
+                            status.style.color = 'var(--color-warning)';
+                        }
+                    } else {
+                        // Use exponential backoff for retries
+                        const backoffDelay = Math.min(1000 * Math.pow(2, transcribeState.speechRestartAttempts), 8000);
+                        console.log(`Network error. Retry ${transcribeState.speechRestartAttempts}/${transcribeState.maxSpeechRestartAttempts} in ${backoffDelay}ms...`);
+                        
+                        showWarning(`Network issue detected. Attempting to reconnect... (${transcribeState.speechRestartAttempts}/${transcribeState.maxSpeechRestartAttempts})`);
+                        
+                        if (transcribeState.shouldContinueRecording) {
+                            setTimeout(() => {
+                                // Check if still online before retrying
+                                if (navigator.onLine) {
+                                    startSpeechRecognition();
+                                } else {
+                                    showWarning('No internet connection. Recording continues offline.');
+                                    transcribeState.shouldContinueRecording = false;
+                                }
+                            }, backoffDelay);
+                        }
                     }
                     break;
                 case 'service-not-allowed':
                     showError('Speech recognition service blocked. Please check browser settings.');
+                    transcribeState.shouldContinueRecording = false;
                     break;
                 case 'aborted':
                     console.log('Speech recognition was aborted (normal during stop)');
@@ -3041,6 +3079,13 @@
             if (transcribeState.recognitionActive) {
                 console.log('Speech recognition already running');
                 return true;
+            }
+            
+            // Check internet connection before starting
+            if (!navigator.onLine) {
+                console.warn('Cannot start speech recognition - no internet connection');
+                showWarning('Speech recognition requires an internet connection. Recording audio only.');
+                return false;
             }
             
             try {
@@ -3337,7 +3382,7 @@
                 transcribeState.speechRecognition.onstart = () => {
                     console.log('✓ Speech recognition started');
                     transcribeState.recognitionActive = true;
-                    transcribeState.speechRestartAttempts = 0;
+                    transcribeState.speechRestartAttempts = 0; // Reset on successful start
                     
                     const status = document.getElementById('status');
                     if (status) {
@@ -3421,9 +3466,17 @@
                     // Auto-restart if we should continue recording
                     if (transcribeState.shouldContinueRecording && transcribeState.isRecording && !transcribeState.isPaused) {
                         console.log('Auto-restarting speech recognition...');
+                        
+                        // Add delay to prevent rapid restart loops
+                        const restartDelay = transcribeState.speechRestartAttempts > 0 ? 1000 : 100;
+                        
                         setTimeout(() => {
-                            startSpeechRecognition();
-                        }, 100);
+                            if (transcribeState.shouldContinueRecording) {
+                                startSpeechRecognition();
+                            }
+                        }, restartDelay);
+                    } else {
+                        console.log('Not restarting speech recognition (shouldContinue:', transcribeState.shouldContinueRecording, 'isRecording:', transcribeState.isRecording, 'isPaused:', transcribeState.isPaused, ')');
                     }
                 };
                 
@@ -4552,18 +4605,46 @@
         // Handle page visibility for battery optimization
         document.addEventListener('visibilitychange', () => {
             if (document.hidden && transcribeState.isRecording) {
-                // Continue recording in background
+                console.log('Page hidden - recording continues');
                 widget.emit('background', { isRecording: true });
+            } else if (!document.hidden && transcribeState.isRecording) {
+                console.log('Page visible - checking speech recognition status');
+                // Check if speech recognition is still running
+                if (!transcribeState.recognitionActive && transcribeState.shouldContinueRecording) {
+                    console.log('Restarting speech recognition after page became visible');
+                    startSpeechRecognition();
+                }
             }
         });
         
         // Handle online/offline status
         window.addEventListener('online', () => {
-            showSuccess('Connection restored');
+            console.log('Connection restored');
+            showSuccess('Internet connection restored');
+            
+            // Reset retry counter when back online
+            if (transcribeState.isRecording) {
+                transcribeState.speechRestartAttempts = 0;
+                
+                // Try to restart speech recognition if it was stopped due to network issues
+                if (transcribeState.shouldContinueRecording && !transcribeState.recognitionActive) {
+                    console.log('Attempting to restart speech recognition after reconnection');
+                    setTimeout(() => {
+                        startSpeechRecognition();
+                    }, 1000);
+                }
+            }
         });
         
         window.addEventListener('offline', () => {
-            showWarning('Offline - recording continues locally');
+            console.log('Connection lost');
+            showWarning('Offline - recording continues locally, but live transcription requires internet');
+            transcribeState.shouldContinueRecording = false;
+            
+            // Stop speech recognition gracefully
+            if (transcribeState.recognitionActive) {
+                stopSpeechRecognition();
+            }
         });
         
         // Cleanup on page unload
