@@ -2074,7 +2074,27 @@
     <div class="app-container">
         <!-- Simple Header -->
         <div class="widget-header">
-            <div class="widget-title">🎤 Transcribe</div>
+            <div class="widget-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="320" height="80" viewBox="0 0 640 160" role="img" aria-labelledby="title desc">
+                  <title id="title">VoiceBoard logo</title>
+                  <desc id="desc">Two overlapping ovals—green behind and purple in front—beside the bold wordmark "VoiceBoard".</desc>
+
+                  <!-- Green oval (behind, slightly left) -->
+                  <ellipse cx="90" cy="80" rx="56" ry="36" fill="#34A853"/>
+                  
+                  <!-- Purple oval (front, slightly right and above) -->
+                  <ellipse cx="130" cy="68" rx="64" ry="40" fill="#6A0DAD"/>
+
+                  <!-- Wordmark -->
+                  <text x="220" y="92"
+                        font-family="Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+                        font-size="44"
+                        font-weight="700"
+                        fill="#000">
+                    VoiceBoard
+                  </text>
+                </svg>
+            </div>
             <div class="widget-controls">
                 <button class="btn-icon" onclick="copyTranscript()" title="Copy transcript">📋</button>
                 <button class="btn-icon" onclick="exportOptions.toggle()" title="Export options">📤</button>
